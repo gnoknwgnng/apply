@@ -9,6 +9,30 @@ const router = express.Router();
 const PORT = 3001;
 const ADMIN_SECRET = "admin123";
 
+// Encryption Setup
+// NOTE: In production, store this securely in .env
+const ENCRYPTION_KEY = crypto.scryptSync('safe-contact-secret-key', 'salt', 32);
+const IV_LENGTH = 16;
+
+function encrypt(text) {
+    const iv = crypto.randomBytes(IV_LENGTH);
+    const cipher = crypto.createCipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
+    let encrypted = cipher.update(text);
+    encrypted = Buffer.concat([encrypted, cipher.final()]);
+    return iv.toString('hex') + ':' + encrypted.toString('hex');
+}
+
+function decrypt(text) {
+    if (!text) return null;
+    const textParts = text.split(':');
+    const iv = Buffer.from(textParts.shift(), 'hex');
+    const encryptedText = Buffer.from(textParts.join(':'), 'hex');
+    const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
+    let decrypted = decipher.update(encryptedText);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+    return decrypted.toString();
+}
+
 const multer = require('multer');
 
 // Configure Multer for Memory Storage (Supabase Upload)
@@ -124,6 +148,7 @@ router.post('/report', upload.single('proof'), async (req, res) => {
         }
 
         const hashed = hashContact(contact);
+        const encrypted = encrypt(contact); // Encrypt the real contact
 
         let { data: existingContact, error: fetchError } = await supabase
             .from('contacts')
@@ -143,6 +168,7 @@ router.post('/report', upload.single('proof'), async (req, res) => {
                 .from('contacts')
                 .insert([{
                     hashed_contact: hashed,
+                    encrypted_contact: encrypted, // Store encrypted
                     type,
                     report_count: 1,
                     status: 'under_review',
@@ -157,13 +183,19 @@ router.post('/report', upload.single('proof'), async (req, res) => {
             contactId = existingContact.id;
             newCount = existingContact.report_count + 1;
 
+            // Optionally update encrypted_contact if it was missing (for old records migrating)
+            const updatePayload = {
+                report_count: newCount,
+                status: existingContact.status === 'flagged' ? 'flagged' : (newCount >= 2 ? 'flagged' : 'under_review'),
+                last_reported_at: new Date()
+            };
+            if (!existingContact.encrypted_contact) {
+                updatePayload.encrypted_contact = encrypted;
+            }
+
             const { error: updateError } = await supabase
                 .from('contacts')
-                .update({
-                    report_count: newCount,
-                    status: existingContact.status === 'flagged' ? 'flagged' : (newCount >= 2 ? 'flagged' : 'under_review'),
-                    last_reported_at: new Date()
-                })
+                .update(updatePayload)
                 .eq('id', contactId);
 
             if (updateError) return res.status(500).json({ error: updateError.message });
@@ -212,10 +244,39 @@ router.get('/admin/reports', async (req, res) => {
             ...r,
             hashed_contact: r.contacts?.hashed_contact,
             report_count: r.contacts?.report_count,
-            contact_status: r.contacts?.status
+            contact_status: r.contacts?.status,
+            contact_id: r.contact_id // Ensure contact_id is available for reveal
         }));
 
         res.json(flattened);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 3.5 Reveal Contact (New)
+router.post('/admin/contacts/:id/reveal', async (req, res) => {
+    const secret = req.headers['x-admin-secret'];
+    if (secret !== ADMIN_SECRET) return res.status(403).json({ error: 'Unauthorized' });
+
+    const id = req.params.id;
+
+    try {
+        const { data: contact, error } = await supabase
+            .from('contacts')
+            .select('encrypted_contact')
+            .eq('id', id)
+            .single();
+
+        if (error) throw error;
+
+        if (!contact.encrypted_contact) {
+            return res.json({ contact: null, message: "No encrypted data found for this contact." });
+        }
+
+        const decrypted = decrypt(contact.encrypted_contact);
+        res.json({ contact: decrypted });
+
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

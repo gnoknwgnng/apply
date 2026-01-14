@@ -10,6 +10,7 @@ export default function AdminPage() {
     const [error, setError] = useState('');
     const [filter, setFilter] = useState('all'); // all, flagged, review
     const [search, setSearch] = useState('');
+    const [revealedContacts, setRevealedContacts] = useState({}); // Map of contactId -> decryptedString
 
     const login = (e) => {
         e.preventDefault();
@@ -70,6 +71,65 @@ export default function AdminPage() {
     const totalReports = reports.length;
     const flaggedContacts = reports.filter(r => r.contact_status === 'flagged').length;
     const underReview = reports.filter(r => r.contact_status === 'under_review').length;
+
+    const toggleReveal = async (contactId) => {
+        // If already revealed, hide it
+        if (revealedContacts[contactId]) {
+            setRevealedContacts(prev => {
+                const next = { ...prev };
+                delete next[contactId];
+                return next;
+            });
+            return;
+        }
+
+        // Fetch decrypted
+        try {
+            const res = await fetch(`/api/admin/contacts/${contactId}/reveal`, {
+                method: 'POST',
+                headers: { 'x-admin-secret': 'admin123' }
+            });
+            const data = await res.json();
+
+            if (data.contact) {
+                setRevealedContacts(prev => ({ ...prev, [contactId]: data.contact }));
+            } else {
+                alert(data.message || 'Cannot decrypt this contact (Old record?)');
+            }
+        } catch (err) {
+            console.error('Failed to reveal', err);
+        }
+    };
+
+    const toggleReveal = async (contactId) => {
+        // If already revealed, hide it
+        if (revealedContacts[contactId]) {
+            setRevealedContacts(prev => {
+                const next = { ...prev };
+                delete next[contactId];
+                return next;
+            });
+            return;
+        }
+
+        // Fetch decrypted
+        try {
+            const res = await fetch(`/api/admin/contacts/${contactId}/reveal`, {
+                method: 'POST',
+                headers: { 'x-admin-secret': 'admin123' }
+            });
+            const data = await res.json();
+
+            if (data.contact) {
+                setRevealedContacts(prev => ({ ...prev, [contactId]: data.contact }));
+            } else {
+                toast.error(data.message || 'Cannot decrypt (Old record?)');
+            }
+        } catch (err) {
+            console.error('Failed to reveal', err);
+            toast.error('Failed to reveal contact');
+        }
+    };
 
     // Filter Logic
     const filteredReports = reports.filter(r => {
@@ -211,9 +271,23 @@ export default function AdminPage() {
                                         </td>
                                         <td className="p-5">
                                             <div className="flex items-center gap-2">
-                                                <code className="bg-black/20 px-2 py-1 rounded text-xs text-indigo-200 font-mono border border-white/5">
-                                                    {report.hashed_contact?.substring(0, 10)}...
-                                                </code>
+                                                {revealedContacts[report.contact_id] ? (
+                                                    <span className="text-emerald-400 font-bold bg-emerald-500/10 px-2 py-1 rounded text-xs">
+                                                        {revealedContacts[report.contact_id]}
+                                                    </span>
+                                                ) : (
+                                                    <code className="bg-black/20 px-2 py-1 rounded text-xs text-indigo-200 font-mono border border-white/5" title={report.hashed_contact}>
+                                                        {report.hashed_contact?.substring(0, 8)}...
+                                                    </code>
+                                                )}
+
+                                                <button
+                                                    onClick={() => toggleReveal(report.contact_id)}
+                                                    className="p-1 hover:bg-white/10 rounded transition-colors text-slate-400 hover:text-white"
+                                                    title={revealedContacts[report.contact_id] ? "Hide" : "Reveal Original Contact"}
+                                                >
+                                                    {revealedContacts[report.contact_id] ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                                                </button>
                                             </div>
                                         </td>
                                         <td className="p-5">
