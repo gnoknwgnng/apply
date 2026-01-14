@@ -72,34 +72,6 @@ export default function AdminPage() {
     const flaggedContacts = reports.filter(r => r.contact_status === 'flagged').length;
     const underReview = reports.filter(r => r.contact_status === 'under_review').length;
 
-    const toggleReveal = async (contactId) => {
-        // If already revealed, hide it
-        if (revealedContacts[contactId]) {
-            setRevealedContacts(prev => {
-                const next = { ...prev };
-                delete next[contactId];
-                return next;
-            });
-            return;
-        }
-
-        // Fetch decrypted
-        try {
-            const res = await fetch(`/api/admin/contacts/${contactId}/reveal`, {
-                method: 'POST',
-                headers: { 'x-admin-secret': 'admin123' }
-            });
-            const data = await res.json();
-
-            if (data.contact) {
-                setRevealedContacts(prev => ({ ...prev, [contactId]: data.contact }));
-            } else {
-                alert(data.message || 'Cannot decrypt this contact (Old record?)');
-            }
-        } catch (err) {
-            console.error('Failed to reveal', err);
-        }
-    };
 
     const toggleReveal = async (contactId) => {
         // If already revealed, hide it
